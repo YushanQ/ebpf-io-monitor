@@ -39,12 +39,15 @@ static void print_event(const struct event *e)
 
     struct tm *tm = localtime(&sec);
     char ts[32];
-    // 格式化时间，包含纳秒
     snprintf(ts, sizeof(ts), "%02d:%02d:%02d.%09u",
              tm->tm_hour, tm->tm_min, tm->tm_sec, nsec);
 
-    // 根据不同的系统调用格式化输出
-    if (strcmp(e->syscall, "lseek") == 0) {
+    // 添加 close 系统调用的处理
+    if (strcmp(e->syscall, "close") == 0) {
+        printf("%-18s %-7d %-7s %-16s [fd=%-3d]\n",
+               ts, e->pid, e->syscall, e->comm, e->fd);
+    }
+    else if (strcmp(e->syscall, "lseek") == 0) {
         const char *whence;
         switch (e->count) {
         case 0: whence = "SEEK_SET"; break;
@@ -52,19 +55,21 @@ static void print_event(const struct event *e)
         case 2: whence = "SEEK_END"; break;
         default: whence = "UNKNOWN"; break;
         }
-        printf("%-8s %-7d %-7s %-16s [fd=%-3d] %-16llu %s\n",
+        printf("%-18s %-7d %-7s %-16s [fd=%-3d] %-16llu %s\n",
                ts, e->pid, e->syscall, e->comm, e->fd, e->offset, whence);
     }
     else if (strcmp(e->syscall, "mmap") == 0) {
-        printf("%-8s %-7d %-7s %-16s [fd=%-3d] offset=%-10llu len=%-8llu %s\n",
-               ts, e->pid, e->syscall, e->comm, e->fd, e->offset, e->count, e->filename[0] ? e->filename : "");
+        printf("%-18s %-7d %-7s %-16s [fd=%-3d] offset=%-10llu len=%-8llu %s\n",
+               ts, e->pid, e->syscall, e->comm, e->fd, e->offset, e->count,
+               e->filename[0] ? e->filename : "");
     }
     else if (strcmp(e->syscall, "fsync") == 0 || strcmp(e->syscall, "fdsync") == 0) {
-        printf("%-8s %-7d %-7s %-16s [fd=%-3d] %s\n",
-               ts, e->pid, e->syscall, e->comm, e->fd, e->filename[0] ? e->filename : "");
+        printf("%-18s %-7d %-7s %-16s [fd=%-3d] %s\n",
+               ts, e->pid, e->syscall, e->comm, e->fd,
+               e->filename[0] ? e->filename : "");
     }
     else {
-        printf("%-8s %-7d %-7s %-16s [fd=%-3d] %-10llu %-8llu %s\n",
+        printf("%-18s %-7d %-7s %-16s [fd=%-3d] %-10llu %-8llu %s\n",
                ts, e->pid, e->syscall, e->comm, e->fd,
                e->offset, e->count, e->filename[0] ? e->filename : "");
     }
@@ -137,7 +142,7 @@ int main(int argc, char **argv)
     int err;
     pid_t child_pid;
     int efd_read = -1, efd_write = -1, efd_openat = -1;
-    int efd_lseek = -1, efd_mmap = -1, efd_fsync = -1, efd_fdatasync = -1;
+    int efd_lseek = -1, efd_mmap = -1, efd_fsync = -1, efd_fdatasync = -1, efd_close = -1;
 
     // 检查参数
     if (argc < 2) {
@@ -242,6 +247,8 @@ int main(int argc, char **argv)
             efd_fsync = bpf_program__attach(prog);
         else if (strcmp(prog_name, "trace_enter_fdatasync") == 0)
             efd_fdatasync = bpf_program__attach(prog);
+        else if (strcmp(prog_name, "trace_enter_close") == 0)
+            efd_close = bpf_program__attach(prog);
 
         if (prog_fd < 0) {
             fprintf(stderr, "Failed to attach %s\n", prog_name);
@@ -282,6 +289,7 @@ cleanup:
     if (efd_mmap >= 0) close(efd_mmap);
     if (efd_fsync >= 0) close(efd_fsync);
     if (efd_fdatasync >= 0) close(efd_fdatasync);
+    if (efd_close >= 0) close(efd_close);
     perf_buffer__free(pb);
     bpf_object__close(obj);
 
